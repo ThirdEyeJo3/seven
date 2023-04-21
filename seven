@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/Counters.sol";
+
+contract MyToken is ERC721URIStorage {
+    using Counters for Counters.Counter;
+    Counters.Counter private _tokenIds;
+
+    uint256 private constant MAX_TOKENS = 10000;
+    uint256 private constant MAX_LEASE_TIME = 365 days;
+    uint256 private constant MIN_LEASE_TIME = 30 days;
+
+    enum Category { Land, Building, Vehicle }
+
+    struct Token {
+        uint256 id;
+        Category category;
+        address owner;
+        uint256 leaseEndTime;
+        uint256 auctionEndTime;
+    }
+
+    mapping (uint256 => Token) private _tokens;
+
+    event TokenLeased(uint256 tokenId, address lessee, uint256 leaseEndTime);
+    event TokenReturned(uint256 tokenId, address owner);
+    event TokenAuctionStarted(uint256 tokenId, address seller, uint256 auctionEndTime);
+    event TokenAuctionEnded(uint256 tokenId, address winner);
+
+    constructor() ERC721("MyToken", "MTK") {}
+
+    function mint(Category category, string memory tokenURI) public returns (uint256) {
+        require(_tokenIds.current() < MAX_TOKENS, "Maximum tokens reached");
+        _tokenIds.increment();
+        uint256 tokenId = _tokenIds.current();
+        _safeMint(msg.sender, tokenId);
+        _setTokenURI(tokenId, tokenURI);
+        _tokens[tokenId] = Token(tokenId, category, msg.sender, 0, 0);
+        return tokenId;
+    }
+
+    function lease(uint256 tokenId, uint256 leaseTime) public {
+        require(_exists(tokenId), "Token does not exist");
+        require(_tokens[tokenId].owner == msg.sender, "Not token owner");
+        require(leaseTime >= MIN_LEASE_TIME && leaseTime <= MAX_LEASE_TIME, "Invalid lease time");
+        _tokens[tokenId].leaseEndTime = block.timestamp + leaseTime;
+        emit TokenLeased(tokenId, msg.sender, _tokens[tokenId].leaseEndTime);
+    }
+
+    function returnToken(uint256 tokenId) public {
+        require(_exists(tokenId), "Token does not exist");
+        require(_tokens[tokenId].owner == msg.sender, "Not token owner");
+        require(_tokens[tokenId].leaseEndTime < block.timestamp, "Cannot return leased token");
+        _tokens[tokenId].owner = address(0);
+        _tokens[tokenId].auctionEndTime = 0;
+        _burn(tokenId);
+        emit TokenReturned(tokenId, msg.sender);
+    }
+
+    function startAuction(uint256 tokenId, uint256 auctionTime) public {
+        require(_exists(tokenId), "Token does not exist");
+        require(_tokens[tokenId].owner == msg.sender, "Not token owner");
+        require(_tokens[tokenId].auctionEndTime == 0, "Auction already started");
+        _tokens[tokenId].auctionEndTime = block.timestamp + auctionTime;
+        emit TokenAuctionStarted(tokenId, msg.sender, _tokens[tokenId].auctionEndTime);
+    }
+
+    function endAuction(uint256 tokenId) public {
+        require(_exists(tokenId), "Token does not exist");
+        require(_tokens[tokenId].auctionEndTime > 0, "Auction not started");
+        require(_tokens[tokenId].auctionEndTime < block.timestamp, "
